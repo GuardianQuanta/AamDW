@@ -1,0 +1,42 @@
+telegramTest:
+  api: "5613398699:AAHEHXGJazSErztqQ881Y79qHURnEDSnOwA"
+  group_id: -836485482
+  group_name: "GuinBotTest"
+telegram_prod:
+  api: "5613398699:AAHEHXGJazSErztqQ881Y79qHURnEDSnOwA"
+  group_id: -842117412
+  group_name: "AJ_FUT"
+telegram_aj_future_trader_prod:
+  api: "5613398699:AAHEHXGJazSErztqQ881Y79qHURnEDSnOwA"
+  group_id: -842117412
+process:
+  QuantaTeleBot:
+      name: QuantaTeleBot
+      argument:
+        - ""
+  PGScraper1:
+      name: PGScraper
+      argument:
+        - PGScraper_config.yaml
+  PGScraper2:
+      name: PGScraper
+      argument:
+        - PGScraper_config_g2.yaml
+  PGScraper3:
+      name: PGScraper
+      argument:
+        - PGScraper_config_g3.yaml
+  DailyPGCheck:
+      name: DailyPGCheck
+      argument:
+        - ""
+  CAalertO365:
+      name: CAalertO365
+      argument:
+        - ""
+  DW_MMperf:
+      name: python
+      argument:
+        - dailyMMperf.py
+        - dwMMperf_conf.yaml
+

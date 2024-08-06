@@ -1,0 +1,10 @@
+database:
+  url: 10.50.250.21:1433
+  user: ttdgw
+  password: gAAAAABlLkcI6LwyBQ_8djT2Zfs08Ocl1tl5RoI8zzKmrGsgOMyCkq44BXGazqv5S9fABk-U9o3gF_z75CAVepMoV24RhKDGHQ==
+  dbName: BosDB
+  engine: mssql+pyodbc
+  driver: SQL+Server
+  fkey: VNw3ztm9DlQYia6P-dZLNQcq6cAP_nNt_pGl9xs4FL8=
+log_config: config/logging.conf
+account_no: "0209000"
