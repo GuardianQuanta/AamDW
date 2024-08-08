@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import pandas as pd
 from typing import List
-from .data_queries import get_equity_lob
+# from .data_queries import get_equity_lob
 from .data_queries import get_dw_price_guideline
 # from ml_trading_strategies.common.data_utils import get_tick_sizes
 import logging
@@ -133,6 +133,11 @@ class DwBackTest:
     :param sampling_freq    frequency of DW order book sampling
     :return:
     """
+    signal_columns = ['signal_datetime', 'signal', 'action', 'ul_mid_time', 'ul_mid_price',
+                      'predicted_ul_mid_price', 'current_dw_time', 'current_dw_ask_price',
+                      'dw_price_guideline_given_ul_mid_price','dw_price_lower_bound_array',
+                      'dw_price_guideline_given_predicted_ul_price', 'ul_stoploss_price',
+                      'dw_stoploss_price','dw_stopprofit_price', 'probability', 'dw_symbol']
 
     def __init__(
             self,
@@ -169,29 +174,25 @@ class DwBackTest:
         self._price_limit = 0.05
         #Too lazy to redefine this variable dict
         self.n_ticks_limit_dict = {}
-        self.n_ticks_limit_dict["KCE"] = 3
-        self.n_ticks_limit_dict["SCB"] = 3
-        self.n_ticks_limit_dict["SCC"] = 3
-        self.n_ticks_limit_dict["SAWAD"] = 3
-        self.n_ticks_limit_dict["BBL"] = 3
-        self.n_ticks_limit_dict["KBANK"] = 3
-        self.n_ticks_limit_dict["PTTEP"] = 3
-        self.n_ticks_limit_dict["TOP"] = 3
-        self.n_ticks_limit_dict["JMART"] = 3
-        self.n_ticks_limit_dict["JMT"] = 3
-        self.n_ticks_limit_dict["TRUE"] = 3
-        self.n_ticks_limit_dict["THANI"] = 3
-        self.n_ticks_limit_dict["BAM"] = 3
-        self.n_ticks_limit_dict["CPALL"] = 3
-        self.n_ticks_limit_dict["CPN"] = 3
+        # self.n_ticks_limit_dict["KCE"] = 3
+        # self.n_ticks_limit_dict["SCB"] = 3
+        # self.n_ticks_limit_dict["SCC"] = 3
+        # self.n_ticks_limit_dict["SAWAD"] = 3
+        # self.n_ticks_limit_dict["BBL"] = 3
+        # self.n_ticks_limit_dict["KBANK"] = 3
+        # self.n_ticks_limit_dict["PTTEP"] = 3
+        # self.n_ticks_limit_dict["TOP"] = 3
+        # self.n_ticks_limit_dict["JMART"] = 3
+        # self.n_ticks_limit_dict["JMT"] = 3
+        # self.n_ticks_limit_dict["TRUE"] = 3
+        # self.n_ticks_limit_dict["THANI"] = 3
+        # self.n_ticks_limit_dict["BAM"] = 3
+        # self.n_ticks_limit_dict["CPALL"] = 3
+        # self.n_ticks_limit_dict["CPN"] = 3
 
         # self.outlook_email = outlook_email
 
-        self.signal_columns =['signal_datetime', 'signal', 'action', 'ul_mid_time', 'ul_mid_price',
-                                  'predicted_ul_mid_price', 'current_dw_time', 'current_dw_ask_price',
-                                  'dw_price_guideline_given_ul_mid_price',
-                                  'dw_price_guideline_given_predicted_ul_price', 'ul_stoploss_price',
-                                  'dw_stoploss_price', 'probability', 'dw_symbol']
+        self.signal_columns = DwBackTest.signal_columns
 
         self.prev_trading_date = get_prev_trade_date(self._trade_date)
         if use_prev_day:
@@ -204,7 +205,7 @@ class DwBackTest:
         if not self._RTD_class is None:
 
             try:
-                self.init_RTD_feed(product_type='eq',symbol=self._symbol,sub_type="orderbook",init_from_beginning=False)
+                self.init_RTD_feed(product_type='eq',symbol=self._symbol,sub_type="orderbook",init_from_beginning=True)
             except Exception as e:
                 # print(e)
                 if str(e).startswith("LOB Stream Class Exist"):
@@ -682,7 +683,368 @@ class DwBackTest:
     #     return self._signals
 
 
+    def get_signals_intraday_morning(self):
+        fn = f"{prediction_path}\\{self._signals_date_assumption.date()}\\{self._symbol}.csv"
+        # fn = f"{base_folder}\\production0\\daily_price_prediction\\predictions_1tick\\{trade_date.date()}\\{self._symbol}.csv"
+        print(f"reading symbol:{self._symbol}")
+        try:
+            df = pd.read_csv(fn, parse_dates=["datetime"])
+        except Exception as e:
+            logger.debug(e)
+            # return
+            raise
 
+        results = []
+
+        # if self._symbol == "FORTH":
+        #     print()
+
+        if df.shape[0] >= 1:
+            max_prob_class = df.loc[:,['-1','0','1']].idxmax(axis=1).iat[0]
+            if df[max_prob_class].iat[0] >= 0.4:
+                '''just for reading'''
+                if max_prob_class == "1" and self._put_call == "C":
+                    df =df
+
+                elif max_prob_class == "-1" and self._put_call == "P":
+                    df = df
+                else:
+                    df = pd.DataFrame([],columns=df.columns)
+            else:
+                df = pd.DataFrame([],columns=df.columns)
+
+
+
+            logger.debug(f"for {self._put_call} predicted class shape {df.shape[0]}")
+
+            dw_syms = self.get_dw_symbols()
+
+            logger.debug(f"list of dw for {self._symbol} => {dw_syms} isEmpty:{ df.empty}")
+
+            if not df.empty:
+                for dw_sym in dw_syms:
+
+                    logger.debug(f"DW sym: {dw_sym}")
+
+                    if not dw_sym in self._SETSMART_DW_SPEC.index:
+                        logger.debug(f"dw:{dw_sym} not in DW SPEC in SETSMART skipping")
+                        continue
+                    # else:
+
+                    if self._SETSMART_DW_SPEC.loc[dw_sym, "IssueBroker"] in self._valid_issuer_list:
+                            print(f"{dw_sym} valid issuer")
+                            logger.debug(f"{dw_sym} valid issuer")
+                    else:
+                        logger.debug(f"{dw_sym} not a valid issuer")
+                        continue
+
+
+                    logger.info(f"start:{dw_sym}")
+                    date_times = df["datetime"]
+                    signals = df["predicted_class"]
+                    probability = df.at[0,str(int(signals.values[0]))]
+                    actions = np.zeros(len(signals))
+                    ul_mid_prices = np.zeros(len(signals))
+                    predicted_ul_mid_prices = np.zeros(len(signals))
+                    current_dw_ask_prices = np.zeros(len(signals))
+                    dw_prices_from_guideline_corresp_to_ul_mid_prices = np.zeros(len(signals))
+                    dw_price_lower_bound_array = np.zeros(len(signals))
+                    dw_prices_from_guideline_corresp_to_predicted_ul_prices = np.zeros(
+                        len(signals)
+                    )
+                    dw_prices_from_guideline_corresp_to_stoplosses_ul_prices =np.zeros(
+                            len(signals)
+                        )
+                    ul_stoploss_price = np.zeros(len(signals))
+                    dw_stoploss_price = np.zeros(len(signals))
+                    dw_stopprofit_price = np.zeros(len(signals))
+                    ul_mid_price_times = [pd.Timestamp(0) for i in range(len(signals))]
+                    current_dw_ask_price_times = [pd.Timestamp(0) for i in range(len(signals))]
+
+                    logger.debug(f"list of dt {date_times}")
+                    idx = pd.IndexSlice
+                    for ii, signal_dt in zip(range(len(date_times)), date_times):
+
+                        # get_prev_trade_date(signal_dt)
+                        # prev_date = get_prev_trade_date(signal_dt)
+                        df_dw_price_guideline = get_dw_price_guideline(dw_sym, self.price_guideline_date)
+                        # df_dw_price_guideline = get_dw_price_guideline(dw_sym, signal_dt)
+                        df_dw_price_guideline = df_dw_price_guideline.sort_values('spot')
+                        if not df_dw_price_guideline.empty:
+                            # ul_dt = pd.Timestamp(signal_dt.date()) + pd.Timedelta(hours=10)
+
+                            try:
+                                df_ul = self.get_ul_LOB()
+                                df_ul_resample = self.get_ul_resample_LOB().loc[:, idx[['MDBid1Price', 'MDAsk1Price'], ['open']]]
+                                df_ul_resample = df_ul_resample.droplevel(1,axis=1).iloc[0,:].T
+                                # df_ul_resample_open = df_ul_resample
+
+                            except IndexError as e:
+                                logger.debug(f"{dw_sym} get UL LOB is empty")
+                                continue
+                            except Exception as e:
+                                print(e)
+                                raise e
+
+                            if len(df_ul) == 0:
+                                logger.debug(f"{dw_sym} get UL LOB is empty")
+                                continue
+
+
+                            # prev_close_bid = ohlcv.at[0, 'Z_LAST_BID']
+                            # prev_close_ask = ohlcv.at[0, 'Z_LAST_OFFER']
+
+                            logger.info(f"UL LOB: {df_ul} b1:{df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['b1']] } a1:{ df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['a1']]}")
+                            logger.info(f"open: {df_ul_resample}")
+                            # current_mid_price = (df_ul[REDIS_DB.LOB_flat_coldict['b1']] + df_ul[REDIS_DB.LOB_flat_coldict['a1']]) / 2.0
+
+                            if self._put_call == "C":
+                                # pass
+                                # ul_mid_price = prev_close_ask
+                                # current_p = df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['a1']]
+                                current_p = df_ul_resample.at['MDAsk1Price']
+
+                            else:
+                                # pass
+                                # ul_mid_price = prev_close_bid
+                                # current_p = df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['b1']]
+                                current_p = df_ul_resample.at['MDBid1Price']
+                                # n_tick_from_prev = SETeq_TickRule.get_n_ticks(current_p,ul_mid_price)
+
+                            # ul_mid_price = (df_ul[REDIS_DB.LOB_flat_coldict['a1']])
+                            # ul_mid_price = df_ul["Mid"].values[-1]
+                            # ul_mid_price = df_ul["MDAsk1Price"].values[-1]
+                            logger.info(f"UL Price {self._symbol} current_p:{current_p}")
+                            ul_mid_price_time = self._RTD_class.redis_sub.convert_timestamp(df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['tss']])
+                            # ul_mid_price_time = pd.Timestamp(df_ul[self._RTD_class.redis_sub.LOB_flat_column_dict['tss']],unit='ms')
+                            ul_mid_price_time = ul_mid_price_time.tz_localize("UTC").tz_convert("ASIA/BANGKOK").tz_localize(None)
+
+                            logger.info(f"ul_mid_price_time {ul_mid_price_time}")
+                            if self._put_call == "C":
+                                predicted_ul_price = (
+                                        current_p
+                                        + self._tick_size_multiple
+                                        * SETeq_TickRule.get_up_tick(current_p) #.values[-1]
+                                )
+
+                                stop_loss_ul_price = (
+                                        current_p
+                                        - self._tick_size_multiple *10
+                                        * SETeq_TickRule.get_up_tick(current_p) #.values[-1]
+                                )
+                            else:
+                                predicted_ul_price = (
+                                        current_p
+                                        - self._tick_size_multiple
+                                        * SETeq_TickRule.get_dw_tick(current_p) #.values[-1]
+                                )
+
+                                stop_loss_ul_price = (
+                                        current_p
+                                        + self._stop_loss_ticks
+                                        * SETeq_TickRule.get_up_tick(current_p) #.values[-1]
+                                )
+
+                            logger.info(f"predicted_ul_price {predicted_ul_price}")
+
+                            diffs = df_dw_price_guideline["spot"] - current_p
+                            idx_mid = abs(diffs).idxmin()
+                            dw_price_from_guideline_corresp_to_ul_mid_price = df_dw_price_guideline.loc[
+                                idx_mid, self.col
+                            ]
+
+                            dw_price_lower_bound = (
+                                    dw_price_from_guideline_corresp_to_ul_mid_price
+                                    - 2
+                                    * SETeq_TickRule.get_up_tick(dw_price_from_guideline_corresp_to_ul_mid_price)  # .values[-1]
+                            )
+
+
+                            logger.info(f"dw_price_from_guideline_corresp_to_ul_mid_price: {dw_price_from_guideline_corresp_to_ul_mid_price}")
+
+                            diffs = df_dw_price_guideline["spot"] - predicted_ul_price
+                            idx = abs(diffs).idxmin()
+                            dw_price_from_guideline_corresp_to_predicted_ul_price = df_dw_price_guideline.loc[
+                                idx, self.col
+                            ]
+                            logger.info(f"dw_price_from_guideline_corresp_to_predicted_ul_price: {dw_price_from_guideline_corresp_to_predicted_ul_price}")
+
+
+                            diffs = df_dw_price_guideline["spot"] - stop_loss_ul_price
+                            idx = abs(diffs).idxmin()
+                            dw_price_at_ul_stoploss = df_dw_price_guideline.loc[
+                                idx, self.col
+                            ]
+                            logger.info(f"dw_price_at_ul_stoploss: {dw_price_at_ul_stoploss}")
+
+                            UpSide_expectation =dw_price_from_guideline_corresp_to_predicted_ul_price - dw_price_from_guideline_corresp_to_ul_mid_price
+
+                            UpSide_Sense = UpSide_expectation / (self._tick_size_multiple* SETeq_TickRule.get_up_tick(dw_price_from_guideline_corresp_to_ul_mid_price))
+
+                            DownSide_expectation =dw_price_at_ul_stoploss - dw_price_from_guideline_corresp_to_ul_mid_price
+
+                            DownSide_Sense = DownSide_expectation / (self._tick_size_multiple* SETeq_TickRule.get_dw_tick(dw_price_from_guideline_corresp_to_ul_mid_price))
+
+
+                            logger.debug(f"UpSide_Sense:{UpSide_Sense} DownSide_Sense:{DownSide_Sense}")
+                            SensitivityCondition = (UpSide_Sense>=1) #and (DownSide_Sense <= -1)
+
+
+                            print(f"{dw_sym}")
+                            dw_LOB = self.get_last_dw_orderbook(product_type='eq',symbol=dw_sym,sub_type='orderbook',
+                                                                init_from_beginning=False)
+
+                            logger.debug(f"{dw_sym} dw_LOB:{dw_LOB}")
+
+                            if len(dw_LOB)> 0 and SensitivityCondition:
+                                # print(df_dw[['UpdateTime', 'MDBid1Price', 'MDAsk1Price']])
+                                current_dw_price = float(dw_LOB[self._RTD_class.redis_sub.LOB_flat_column_dict['a1']]
+                                )
+                                # DW_LOB_price = dw_price_from_guideline_corresp_to_ul_mid_price
+                                DW_LOB_price = current_dw_price
+                                DW_Stop_profit_price = np.round(DW_LOB_price + self._stop_loss_ticks  * SETeq_TickRule.get_dw_tick(current_dw_price),2)
+
+                                if current_dw_price > self._price_limit:
+                                    if np.isnan(self._stop_loss_ticks):
+                                        logger.debug("Stop loss tick isnan")
+                                        stop_loss_ul_price = np.nan
+                                        stop_loss_price= np.nan
+                                    else:
+                                        stop_loss_price = np.round(current_dw_price - self._stop_loss_ticks * SETeq_TickRule.get_dw_tick(current_dw_price),2)
+                                        where_same = df_dw_price_guideline[self.col] == stop_loss_price
+                                        # if dw_sym == "KBANK01C2303X":
+                                        #     print()
+                                        if not where_same.any(): #If no exact price on the PG, need to get first negative
+                                            diff_2 = (df_dw_price_guideline[self.col] - stop_loss_price)
+
+                                            if  diff_2[diff_2 < 0].shape[0] == 0:
+                                                '''Negative 1 indicates price not found on price guideline... should skip'''
+                                                max_of_negative_idx = -1
+                                                stop_loss_ul_price = -1
+                                                stop_loss_price = -1
+                                            else:
+                                                max_of_negative_idx = diff_2[diff_2 < 0].idxmax() #First non_positive index
+
+                                                stop_loss_ul_price = df_dw_price_guideline.at[max_of_negative_idx,"spot"]
+                                                stop_loss_price = df_dw_price_guideline.at[max_of_negative_idx,self.col]
+
+                                        else:
+                                            if self._put_call == "C":
+                                                stop_loss_ul_price = df_dw_price_guideline['spot'][where_same].max()
+                                            else:
+                                                stop_loss_ul_price = df_dw_price_guideline['spot'][where_same].min()
+
+
+                                    # current_dw_time = pd.Timestamp(dw_LOB[REDIS_DB.LOB_flat_coldict['tss']], unit='ms')
+                                    current_dw_time = self._RTD_class.redis_sub.convert_timestamp(
+                                                                    dw_LOB[self._RTD_class.redis_sub.LOB_flat_column_dict['tss']])
+
+                                    current_dw_time = current_dw_time.tz_localize("UTC").tz_convert("ASIA/BANGKOK").tz_localize(
+                                        None)
+
+                                    # logger.info(
+                                    #     f"UL price at {ul_mid_price_time} = {ul_mid_price}"
+                                    # )
+                                    logger.info(
+                                        f"curent {dw_sym} ask price {current_dw_price} at {current_dw_time}"
+                                    )
+                                    logger.info(
+                                        f"{dw_sym} dw_price_from_guideline_corresp_to_ul_mid_price {dw_price_from_guideline_corresp_to_ul_mid_price}"
+                                    )
+                                    logger.info(
+                                        f"{dw_sym} dw_price_from_guideline_corresp_to_predicted_ul_price {dw_price_from_guideline_corresp_to_predicted_ul_price}"
+                                    )
+
+                                    logger.info(f"Condition 1 {np.sign(dw_price_from_guideline_corresp_to_ul_mid_price- dw_price_from_guideline_corresp_to_predicted_ul_price)} == -1"
+                                                 f" Condition 2 {np.sign(current_dw_price- dw_price_from_guideline_corresp_to_predicted_ul_price)} == -1"
+                                                f" StopLoss Price: {stop_loss_ul_price}  ")
+
+
+                                    if  (
+                                        (
+                                            np.sign(
+                                                dw_price_from_guideline_corresp_to_ul_mid_price
+                                                - dw_price_from_guideline_corresp_to_predicted_ul_price
+                                            )
+                                            == -1
+                                        )
+                                        # &
+                                        # (
+                                        #     np.sign(
+                                        #         ul_mid_price
+                                        #         - dw_price_from_guideline_corresp_to_predicted_ul_price
+                                        #     )
+                                        #     == -1
+                                        # )
+                                        ) \
+                                            and not (stop_loss_ul_price <= 0) :
+
+                                        #TODO check Risk versus reward
+
+                                        logger.debug(f"Passed condition for profit... addding:{dw_sym}")
+                                        actions[ii] = 1
+                                        ul_mid_price_times[ii] = ul_mid_price_time
+                                        ul_mid_prices[ii] = current_p
+                                        predicted_ul_mid_prices[ii] = predicted_ul_price
+                                        current_dw_ask_price_times[ii] = current_dw_time
+                                        current_dw_ask_prices[ii] = DW_LOB_price
+                                        dw_prices_from_guideline_corresp_to_ul_mid_prices[
+                                            ii
+                                        ] = dw_price_from_guideline_corresp_to_ul_mid_price
+                                        dw_prices_from_guideline_corresp_to_predicted_ul_prices[
+                                            ii
+                                        ] = dw_price_from_guideline_corresp_to_predicted_ul_price
+
+                                        dw_price_lower_bound_array[ii] = dw_price_lower_bound
+
+                                        dw_prices_from_guideline_corresp_to_stoplosses_ul_prices[ii] = dw_price_at_ul_stoploss
+
+                                        ul_stoploss_price[ii] = stop_loss_ul_price
+                                        dw_stoploss_price[ii] = stop_loss_price
+                                        dw_stopprofit_price[ii] = DW_Stop_profit_price
+                                else:
+                                    logger.info(f"DW price is { self._price_limit }or less: {current_dw_price}")
+                            else:
+                                logger.info(
+                                    f"{dw_sym}: NO LOB"
+                                )
+                        res = pd.DataFrame(
+                            {
+                                "signal_datetime": date_times,
+                                "signal": signals,
+                                "action": actions,
+                                "ul_mid_time": ul_mid_price_times,
+                                "ul_mid_price": ul_mid_prices,
+                                "predicted_ul_mid_price": predicted_ul_mid_prices,
+                                "current_dw_time": current_dw_ask_price_times,
+                                "current_dw_ask_price": current_dw_ask_prices,
+                                "dw_price_guideline_given_ul_mid_price": dw_prices_from_guideline_corresp_to_ul_mid_prices,
+                                "dw_price_lower_bound_array": dw_price_lower_bound_array,
+                                "dw_price_guideline_given_predicted_ul_price": dw_prices_from_guideline_corresp_to_predicted_ul_prices, #thiis take profit price
+                                "ul_stoploss_price": ul_stoploss_price,
+                                "dw_stoploss_price": dw_stoploss_price,
+                                "dw_stopprofit_price": dw_stopprofit_price,
+                                'probability':probability
+                            }
+                        )
+
+                        res["dw_symbol"] = dw_sym
+                        res = res.loc[res["action"] == 1].reset_index(drop=True)
+                        # print(res)
+                        results.append(res)
+        # self._signals
+        if len(results) == 0:
+            _signals = pd.DataFrame(columns=self.signal_columns)
+        else:
+            _signals = pd.concat(results).drop_duplicates().reset_index(drop=True)
+
+        if _signals.empty:
+            self._signals = pd.DataFrame(columns=self.signal_columns)
+
+        if not _signals.empty:
+            self._signals = _signals
+
+        return self._signals
 
 
     def get_signals_intraday_evening(self):
@@ -1137,6 +1499,12 @@ class DwBackTest:
         logger.info("get_ul_LOB")
         return self.RTD_Instrument.get_latest_LOB()
 
+    def get_ul_resample_LOB(self):
+        interval_start = pd.Timestamp.now().normalize() + pd.Timedelta( ( (10-7)*60 + 30),unit='min')
+
+        DF = self.RTD_Instrument.LOB_state_class.get_dataframe_resample('5T', interval_start)
+        DF = DF[DF.index>=interval_start].copy()
+        return DF
 
 
 def read_date_cache_signal_folder(target_date):

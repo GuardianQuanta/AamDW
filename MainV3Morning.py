@@ -57,7 +57,7 @@ base_folder = "K:\\aam_dw"
 
 class signal_class():
     def __init__(self, symbol, limit_buy_price, quantity, trigger_stop_profit_price, stop_profit_price,
-                 trigger_stop_loss_price, stop_loss_price,signal_date,current_qty=0):
+                 trigger_stop_loss_price, stop_loss_price,signal_date,current_qty=0,lower_bound_price=0):
         logger.debug(f"Init Signal Class for: {symbol} limit_buy_price:{limit_buy_price} quantity:{quantity} "
                      f"stop_profit_price:{stop_profit_price} trigger_stop_profit_price:{trigger_stop_profit_price} "
                      f"stop_loss_price:{stop_loss_price} trigger_stop_loss_price:{trigger_stop_loss_price}")
@@ -65,6 +65,7 @@ class signal_class():
         self._signal_entry_date = signal_date
         self.quantity = np.round(quantity, 0)
         self.limit_buy_price = np.round(limit_buy_price, 2)
+        self.lower_bound_price = np.round(lower_bound_price, 2)
         self.trigger_stop_profit_price = np.round(trigger_stop_profit_price, 2)
         self.stop_profit_price = np.round(stop_profit_price, 2)
         self.trigger_stop_loss_price = np.round(trigger_stop_loss_price, 2)
@@ -98,17 +99,7 @@ class signal_class():
 Signal DF hardcoded columns index
 '''
 
-signal_columns = ['signal_datetime', 'signal', 'action', 'ul_mid_time', 'ul_mid_price',
-                  'predicted_ul_mid_price', 'current_dw_time', 'current_dw_ask_price',
-                  'dw_price_guideline_given_ul_mid_price',
-                  'dw_price_guideline_given_predicted_ul_price', 'ul_stoploss_price',
-                  'dw_stoploss_price', 'dw_symbol']
-
-signal_columns = ['signal_datetime', 'signal', 'action', 'ul_mid_time', 'ul_mid_price',
-       'predicted_ul_mid_price', 'current_dw_time', 'current_dw_ask_price',
-       'dw_price_guideline_given_ul_mid_price',
-       'dw_price_guideline_given_predicted_ul_price', 'ul_stoploss_price',
-       'dw_stoploss_price', 'dw_stopprofit_price', 'probability', 'dw_symbol']
+signal_columns = deploy.DwBackTest.signal_columns
 
 signal_column_dict = {item[1]: item[0] for item in enumerate(signal_columns)}
 
@@ -186,9 +177,6 @@ class main(QMainWindow):
         self.trading_qty_max = 2000
         # self.trading_value_limit = 4000
         self.stop_loss_ticks = 10
-        self.small_stock_list = ['SAWAD', 'JMT', 'JMART', 'BAM', 'KCE', 'THANI'
-            , 'DTAC', 'TOP']
-
         self.tick_size_multiple = 1
 
         self.skip_ul_sym_list = []
@@ -206,7 +194,7 @@ class main(QMainWindow):
         self.DW_spec.set_index('Instrument', inplace=True)
         logger.info(f"Init Main Complete")
 
-        self.init_positions_prev_day_signal()
+        self.init_positions()
 
         '''
         There are 5 events to execute
@@ -287,6 +275,35 @@ class main(QMainWindow):
         self.get_close_app_timer()
         self.start_UI_loop()
         # self.start_execution()
+
+
+    def init_positions(self):
+        '''
+        This should run in the morning before 10:00
+        > to run take profit
+        >
+        '''
+        prev_date = deploy.get_prev_trade_date(self.run_date)
+        '''folders are +1 trading date'''
+        prev_days_dict = deploy.read_date_cache_signal_folder(prev_date)
+        # if len(prev_days_dict) == 0:
+        #     print()
+        self.current_position_dict = {}
+
+        for ul,PC_dict in prev_days_dict.items():
+            for pc, signal_df in PC_dict.items():
+                for i in range(signal_df.shape[0]):
+                    dw_symbol = signal_df.iat[i,signal_df.columns.get_loc('dw_symbol')]
+                    try:
+                        current_position = self.Portfolio_Class.get_positions_from_connector(dw_symbol)
+                        print(current_position)
+                    except Exception as e:
+                        logger.debug(f"Request Error:{e} moving on")
+                        continue
+                    if ul not in self.current_position_dict:
+                        self.current_position_dict[ul] = {'P':0,'C':0}
+
+                    self.current_position_dict[ul][pc] = current_position
 
     def init_ui(self):
 
@@ -494,66 +511,6 @@ class main(QMainWindow):
         self.LiveOrderTable.setSizeAdjustPolicy(QAbstractScrollArea.AdjustToContents)
 
 
-
-    def init_positions_prev_day_signal(self):
-        '''
-        This should run in the morning before 10:00
-        > to run take profit
-        >
-        '''
-        prev_date = deploy.get_prev_trade_date(self.run_date)
-        '''folders are +1 trading date'''
-        prev_days_dict = deploy.read_date_cache_signal_folder(prev_date)
-        # if len(prev_days_dict) == 0:
-        #     print()
-
-        for ul,PC_dict in prev_days_dict.items():
-            for pc, signal_df in PC_dict.items():
-                for i in range(signal_df.shape[0]):
-                    dw_symbol = signal_df.iat[i,signal_df.columns.get_loc('dw_symbol')]
-                    try:
-                        current_position = self.Portfolio_Class.get_positions_from_connector(dw_symbol)
-                        print(current_position)
-                    except Exception as e:
-                        logger.debug(f"Request Error:{e} moving on")
-                        continue
-
-                    if current_position['q'] > 0:
-                        #need to need to create stop loss and take profit
-                        # limit_buy_price = PC_pair['P'].signals.iat[i,signal_column_dict['current_dw_ask_price']]
-                        limit_buy_price = signal_df.iat[
-                            i, signal_column_dict['dw_price_guideline_given_ul_mid_price']]
-                        stop_loss_price = signal_df.iat[i, signal_column_dict['dw_stoploss_price']]
-                        trigger_stop_loss_price = signal_df.iat[i, signal_column_dict['ul_stoploss_price']]
-                        # stop_loss_price = limit_buy_price - np.round(deploy.SETeq_TickRule.get_dw_tick(limit_buy_price)*2,2)
-                        stop_profit_price = signal_df.iat[
-                            i, signal_column_dict['dw_stoploss_price']]
-
-                        signal_date = signal_df.iat[i,signal_column_dict['signal_datetime']].date()
-
-                        self.add_instrument(symbol=dw_symbol, market="XBKK", product_type="eq", pc=pc)
-
-                        self.symbols_signal_dict[dw_symbol] = signal_class(symbol=dw_symbol, limit_buy_price=limit_buy_price,
-                                                                        # quantity=self.trading_Qty,
-                                                                            quantity = current_position['q'],
-                                                                            trigger_stop_loss_price=trigger_stop_loss_price,
-                                                                            stop_loss_price=stop_loss_price,
-                                                                            trigger_stop_profit_price=stop_profit_price,
-                                                                            stop_profit_price=stop_profit_price,
-                                                                            signal_date=signal_date,
-                                                                            current_qty=current_position['q'])
-
-        # print()
-
-
-        portfolio_current_position = self.Portfolio_Class.get_positions()
-
-        for symbol, pos in portfolio_current_position.items():
-            if not symbol in self.symbols_signal_dict.keys():
-                logger.debug(f"Position {symbol} {pos} not found in signal dictionary")
-                self.send_notification(f"Position {symbol} {pos} not found in signal dictionary")
-
-
     def generate_dw_signal(self, run_date, tick_size_multiple=1, start_minute=2, read_cache=False):
         # logger.info(f"read_signal function start")
         # signal_file_tmp = pd.DataFrame(["EA24C2212A",0.23,5,3],columns=['Symbol','Price','ProfitTick','LossTick'])
@@ -580,14 +537,11 @@ class main(QMainWindow):
                     ul_dw_PC_dict['P'].read_signal_file(run_date)
                     ul_dw_PC_dict['C'].read_signal_file(run_date)
                 else:
-                    ul_dw_PC_dict['P'].get_signals_intraday_evening()
-                    ul_dw_PC_dict['C'].get_signals_intraday_evening()
+                    ul_dw_PC_dict['P'].get_signals_intraday_morning()
+                    ul_dw_PC_dict['C'].get_signals_intraday_morning()
             else:
                 logger.info(f"ul sym no in dict of ul classes")
 
-                # if ul_sym in self.small_stock_list:
-                #     stop_loss_ticks = 3
-                # else:
                 stop_loss_ticks = self.stop_loss_ticks
 
                 self.dict_of_ul_classes[ul_sym] = {"P": deploy.DwBackTest(symbol=ul_sym, trade_date=run_date,
@@ -612,18 +566,14 @@ class main(QMainWindow):
                                                                           )
                                                    }
 
-                # self.dict_of_ul_classes[ul_sym]['P'].get_signals()
-                # self.dict_of_ul_classes[ul_sym]['C'].get_signals()
 
-                # self.dict_of_ul_classes[ul_sym]['P'].read_signal_file(prev_trading_date)
-                # self.dict_of_ul_classes[ul_sym]['C'].read_signal_file(prev_trading_date)
                 if read_cache:
                     self.dict_of_ul_classes[ul_sym]['P'].read_signal_file(run_date)
                     self.dict_of_ul_classes[ul_sym]['C'].read_signal_file(run_date)
                 else:
 
-                    self.dict_of_ul_classes[ul_sym]['P'].get_signals_intraday_evening()
-                    self.dict_of_ul_classes[ul_sym]['C'].get_signals_intraday_evening()
+                    self.dict_of_ul_classes[ul_sym]['P'].get_signals_intraday_morning()
+                    self.dict_of_ul_classes[ul_sym]['C'].get_signals_intraday_morning()
                     self.dict_of_ul_classes[ul_sym]['P'].write_signal_file()
                     self.dict_of_ul_classes[ul_sym]['C'].write_signal_file()
                 # return signal_file_tmp
@@ -671,8 +621,14 @@ class main(QMainWindow):
                         i, signal_column_dict['dw_price_guideline_given_predicted_ul_price']]
                     signal_date = PC_pair['P'].signals.iat[
                         i, signal_column_dict['signal_datetime']]
+
+                    lower_bound_price = PC_pair['P'].signals.iat[i, signal_column_dict['dw_price_lower_bound_array']]
+
                     if np.isnan(limit_buy_price) or np.isnan(stop_profit_price):
                         continue
+
+                    current_pos_dict = self.current_position_dict.get(ul_sym,{'P':0,'C':0})
+                    # current_pos_dict.get('P',)
 
                     self.add_instrument(symbol=dw_sym, market="XBKK", product_type="eq", pc="P")
                     self.symbols_signal_dict[dw_sym] = signal_class(symbol=dw_sym, limit_buy_price=limit_buy_price,
@@ -682,7 +638,10 @@ class main(QMainWindow):
                                                                     stop_loss_price=stop_loss_price,
                                                                     trigger_stop_profit_price=stop_profit_price,
                                                                     stop_profit_price=stop_profit_price,
-                                                                    signal_date=signal_date)
+                                                                    signal_date=signal_date,
+                                                                    current_qty=current_pos_dict['P'],
+                                                                    lower_bound_price=lower_bound_price,
+                                                                    )
 
             if not PC_pair['C']._signals is None and not PC_pair['C'].signals.empty:
 
@@ -702,8 +661,13 @@ class main(QMainWindow):
 
                     signal_date = PC_pair['C'].signals.iat[
                         i, signal_column_dict['signal_datetime']]
+
+                    lower_bound_price = PC_pair['C'].signals.iat[i, signal_column_dict['dw_price_lower_bound_array']]
+
                     if np.isnan(limit_buy_price) or np.isnan(stop_profit_price):
                         continue
+
+                    current_pos_dict = self.current_position_dict.get(ul_sym,{'P':0,'C':0})
 
                     self.add_instrument(symbol=dw_sym, market="XBKK", product_type="eq", pc="C")
                     self.symbols_signal_dict[dw_sym] = signal_class(symbol=dw_sym, limit_buy_price=limit_buy_price,
@@ -713,7 +677,9 @@ class main(QMainWindow):
                                                                     stop_loss_price=stop_loss_price,
                                                                     trigger_stop_profit_price=stop_profit_price,
                                                                     stop_profit_price=stop_profit_price,
-                                                                    signal_date=signal_date)
+                                                                    signal_date=signal_date,
+                                                                    current_qty=current_pos_dict['P'],
+                                                                    lower_bound_price=lower_bound_price)
 
         self.populate_signal_table()
         print("Done")
@@ -966,13 +932,12 @@ class main(QMainWindow):
                 logger.info(f"\t{symbol} {signal_class_obj} signal is not live and update is True... liquidate")
                 self.liquidate(symbol, signal_class_obj)
             else:
-                OrderObj = self.send_Limit_with_bracket_order(symbol=symbol, signal_obj=signal_class_obj,tick_limit=None)
+                OrderObj = self.send_Stop_send_Limit_with_bracket_order(symbol=symbol, signal_obj=signal_class_obj,tick_limit=None)
                 if OrderObj:
                     logger.debug(f"{symbol} order compelte")
                     signal_class_obj.add_order_class(OrderObj)
 
     def add_instrument(self, symbol, market, product_type, pc=""):
-
         if symbol in self.DW_spec.index:  # making sure it in set smart
             print(f"creating class for:{symbol}")
 
@@ -1002,6 +967,162 @@ class main(QMainWindow):
 
         # mInstr.set_RTD_class(aRTD)
         # self.list_of_trading_instruments.append(symbol)
+
+
+    def send_Stop_send_Limit_with_bracket_order(self, symbol, signal_obj, tick_limit):
+        target_quantity = signal_obj.quantity
+        order_price = signal_obj.limit_buy_price
+        stop_profit_trigger_price = signal_obj.trigger_stop_profit_price
+        stop_profit_price = signal_obj.stop_profit_price
+        trigger_price = signal_obj.limit_buy_price
+        stop_loss_trigger_price = signal_obj.trigger_stop_loss_price
+        stop_loss_price = signal_obj.stop_loss_price
+        lower_bound_price = signal_obj.lower_bound_price
+
+
+        stop_condition = "<="
+        trigger_price_type = "A"
+
+        logger.info(
+            f"send_Stop_Limit_with_bracket_order for: symbol:{symbol} target_quantity:{target_quantity} order_price:{order_price} "
+            f"stop_profit_trigger_price:{stop_profit_trigger_price} stop_profit_price:{stop_profit_price} "
+            f"stop_loss_trigger_price:{stop_loss_trigger_price} stop_loss_price:{stop_loss_price} "
+            f"stop_condition:{stop_condition} trigger_price_type:{trigger_price_type}"
+        )
+
+
+        self.mOrderInterface.clear_ActiveOrdersSym(symbol, market=self.market, maxtimeout=10)
+
+        if not signal_obj.isSignalLive():
+            current_position = signal_obj._current_qty
+            target_quantity = current_position
+            # target_quantity = self.trading_Qty
+        else:
+            current_position = self.Portfolio_Class.get_positions_from_connector(symbol)['q']
+
+        ainstr = self.symbol_dict[symbol]
+        # current_position = self.Portfolio_Class.get_position_of_symbol(symbol)
+        # current_position = 0
+        logger.info(f"current existing position:{current_position} and target_quantity: {target_quantity}")
+
+        if (current_position) == 0:
+            if self.check_todays_deal(symbol) or not signal_obj.isSignalLive():
+                # Already traded today, skip
+                # Already passed limit entry time
+                logger.debug(f"{symbol} traded today, skip Already passed limit entry time: {signal_obj._signal_entry_date}")
+                return
+
+        try:
+            '''Deleting all existing algo orders within the process'''
+            list_of_order_class = self.mOrderManager.get_symbols_order_collection(symbol)
+            for a_order in list_of_order_class:
+                a_order.delete_order()
+                logger.info(f"Deleted order {a_order}")
+
+            # SmartBracketOrder = self.mOrderManager.create_trigger_limit_with_auto_bracket_on_full(instrument=ainstr,
+            #                                                                                       target_quantity=target_quantity,
+            #                                                                                       current_quantity=current_position,
+            #                                                                                       order_price=order_price,
+            #                                                                                       signal_price=None,
+            #                                                                                       trigger_price=trigger_price,
+            #                                                                                       stop_condition=stop_condition,
+            #                                                                                       stop_profit_trigger_price=stop_profit_trigger_price,
+            #                                                                                       stop_profit_price=stop_profit_price,
+            #                                                                                       stop_loss_trigger_price=stop_loss_trigger_price,
+            #                                                                                       stop_loss_price=stop_loss_price,
+            #                                                                                       tick_limit=tick_limit,
+            #                                                                                       manual_order_price=None,
+            #                                                                                       TG_BOT_class_instance=self.BOT_Helper,
+            #                                                                                       check_LOB_Tick_state=False
+            #
+            #                                                                                       )
+
+            SmartBracketOrder = self.mOrderManager.create_trigger_limit_with_auto_bracket_on_full(instrument=ainstr,
+                                                                                                  order_price=order_price,
+                                                                                                  target_quantity=target_quantity,
+                                                                                                  trigger_price=trigger_price,
+                                                                                                  stop_condition=stop_condition,
+                                                                                                  current_quantity=current_position,
+                                                                                                  lower_bound_price=lower_bound_price,
+                                                                                                  signal_price=None,
+                                                                                                  trigger_price_type=trigger_price_type,
+                                                                                                  stop_profit_trigger_price=stop_profit_trigger_price,
+                                                                                                  stop_profit_price=stop_profit_price,
+                                                                                                  stop_loss_trigger_price=stop_loss_trigger_price,
+                                                                                                  stop_loss_price=stop_loss_price,
+                                                                                                  tick_limit=tick_limit,
+                                                                                                  manual_order_price=None,
+                                                                                                  TG_BOT_class_instance=self.BOT_Helper,
+                                                                                                  check_LOB_Tick_state=False
+
+                                                                                                  )
+            return SmartBracketOrder
+            # self.
+
+        except OrderClass.OrderInvalid as e:
+            logger.debug(f"Order Invalid Type: {e.type}")
+            if e.type == 0:
+                return None
+            elif e.type == 1:
+                self.send_notification(text=str(
+                    e) + f" send_Limit_with_bracket_order for: symbol:{symbol} target_quantity:{target_quantity} order_price:{order_price} "
+                         f"stop_profit_trigger_price:{stop_profit_trigger_price} stop_profit_price:{stop_profit_price} "
+                         f"stop_loss_trigger_price:{stop_loss_trigger_price} stop_loss_price:{stop_loss_price}")
+
+                if current_position > 0:
+                    '''
+                    Exit
+                    '''
+                    try:
+                        Best_Price_Order = self.mOrderManager.place_best_order(instrument=ainstr,
+                                                                               quantity=-current_position,
+                                                                               tick_limit=tick_limit,
+                                                                               signal_price=None,
+                                                                               manual_order_price=None, retry_max=5,
+                                                                               TG_BOT_class_instance=self.BOT_Helper,
+                                                                               check_LOB_Tick_state=False)
+
+                    except OrderClass.RetryExceedMax as e:
+                        if e.type == 1:
+                            print("Failed to sell after repeating... skipping")
+                            pass
+                return None
+            elif e.type == 2:
+                self.send_notification(text=str(
+                    e) + f" send_Limit_with_bracket_order for: symbol:{symbol} target_quantity:{target_quantity} order_price:{order_price} "
+                         f"stop_profit_trigger_price:{stop_profit_trigger_price} stop_profit_price:{stop_profit_price} "
+                         f"stop_loss_trigger_price:{stop_loss_trigger_price} stop_loss_price:{stop_loss_price}")
+
+                if current_position > 0:
+                    '''
+                    Exit
+                    '''
+                    Best_Price_Order = self.mOrderManager.place_best_order(instrument=ainstr,
+                                                                           quantity=-current_position,
+                                                                           tick_limit=tick_limit,
+                                                                           signal_price=None,
+                                                                           manual_order_price=None, retry_max=10,
+                                                                           TG_BOT_class_instance=self.BOT_Helper,
+                                                                           check_LOB_Tick_state=False)
+
+                return None
+            pass
+        except OrderClass.order_message_error as OE:
+            if OE.get_error_type() == OrderClass.order_error.UNABLE_TO_FIND_PRODUCT:
+                logger.debug(f"{OE}")
+                self.send_notification(text=str(
+                    OE) + f" send_Limit_with_bracket_order for: symbol:{symbol} target_quantity:{target_quantity} order_price:{order_price} "
+                          f"stop_profit_trigger_price:{stop_profit_trigger_price} stop_profit_price:{stop_profit_price} "
+                          f"stop_loss_trigger_price:{stop_loss_trigger_price} stop_loss_price:{stop_loss_price}")
+
+                return None
+            else:
+                raise OE
+        except OrderClass.LOB_EMPTY_RETRY_EXCEED as OE:
+            logger.debug("LOB_EMPTY_RETRY_EXCEED Skipping")
+        except Exception as e:
+            logger.debug(f"Crashed {e}")
+            raise e
 
 
     def send_Limit_with_bracket_order(self, symbol, signal_obj, tick_limit):
